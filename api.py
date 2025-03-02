@@ -120,6 +120,25 @@ def blacklist_user():
     save_banned_users(banned_users)
     return jsonify({"message": "User blacklisted successfully"})
 
+@app.route('/submit_blacklist_request', methods=['POST'])
+@login_required
+def submit_blacklist_request():
+    data = request.json
+    user_id = data['user_id']
+    display_name = data['display_name']
+    reason = data['reason']
+    mc_info = data.get('mc_info', {})
+
+    request_id = len(PENDING_REQUESTS) + 1  # In a real system, use a UUID
+    PENDING_REQUESTS[request_id] = {
+        "user_id": user_id,
+        "display_name": display_name,
+        "reason": reason,
+        "mc_info": mc_info,
+        "auth_id": int(session["discord_id"])
+    }
+    return jsonify({"message": "Blacklist request submitted successfully", "request_id": request_id})
+
 @app.route('/check_blacklist/<user_id>', methods=['GET'])
 def check_blacklist(user_id):
     banned_users = load_banned_users()
