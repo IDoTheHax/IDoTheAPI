@@ -64,7 +64,7 @@ def authorized_required(f):
 def login():
     oauth2_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify"
     return redirect(oauth2_url)
-    
+
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
@@ -159,8 +159,10 @@ def website_blacklist():
 @login_required
 @authorized_required
 def blacklist_requests():
-    return jsonify({"requests": PENDING_REQUESTS, "discord_username": session.get("discord_username")})
-
+    return jsonify({
+        "requests": PENDING_REQUESTS,
+        "discord_username": session.get("discord_username")
+    })
 
 @app.route('/check_login')
 def check_login():
