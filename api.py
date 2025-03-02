@@ -91,7 +91,7 @@ def callback():
     user_json = user_response.json()
     session["discord_id"] = user_json.get("id")
     session["discord_username"] = user_json.get("username")
-    return redirect(url_for('blacklist_requests'))
+    return redirect(url_for('blacklist_requests')) ## TODO MAKE IT GO TO THE OTHER SERVER
 
 @app.route('/logout')
 def logout():
@@ -100,44 +100,47 @@ def logout():
 
 @app.route('/blacklist', methods=['POST'])
 def blacklist_user():
-    data = request.json
-    auth_id = int(data['auth_id'])
-    if auth_id not in AUTHORIZED_USERS:
-        return jsonify({"error": "Unauthorized"}), 403
+    try:
+        data = request.json
+        app.logger.info(f"Received data: {data}")
 
-    user_id = data['user_id']
-    reason = data['reason']
-    display_name = data['display_name']
-    mc_info = data.get('mc_info')
+        # Check for required fields
+        required_fields = ['auth_id', 'user_id', 'reason']
+        missing_fields = [field for field in required_fields if field not in data]
+        
+        if missing_fields:
+            return jsonify({
+                "error": f"Missing required fields: {', '.join(missing_fields)}"
+            }), 400
+            
+        # Convert auth_id to int, with error handling
+        try:
+            auth_id = int(data['auth_id'])
+        except (ValueError, TypeError):
+            return jsonify({
+                "error": "auth_id must be a valid integer"
+            }), 400
+            
+        if auth_id not in AUTHORIZED_USERS:
+            return jsonify({"error": "Unauthorized"}), 403
 
-    banned_users = load_banned_users()
-    banned_users[user_id] = {
-        "reason": reason,
-        "timestamp": datetime.utcnow().isoformat(),
-        "display_name": display_name,
-        "mc_info": mc_info
-    }
-    save_banned_users(banned_users)
-    return jsonify({"message": "User blacklisted successfully"})
+        user_id = data['user_id']
+        reason = data['reason']
+        display_name = data['display_name']
+        mc_info = data.get('mc_info')
 
-@app.route('/submit_blacklist_request', methods=['POST'])
-@login_required
-def submit_blacklist_request():
-    data = request.json
-    user_id = data['user_id']
-    display_name = data['display_name']
-    reason = data['reason']
-    mc_info = data.get('mc_info', {})
-
-    request_id = len(PENDING_REQUESTS) + 1  # In a real system, use a UUID
-    PENDING_REQUESTS[request_id] = {
-        "user_id": user_id,
-        "display_name": display_name,
-        "reason": reason,
-        "mc_info": mc_info,
-        "auth_id": int(session["discord_id"])
-    }
-    return jsonify({"message": "Blacklist request submitted successfully", "request_id": request_id})
+        banned_users = load_banned_users()
+        banned_users[user_id] = {
+            "reason": reason,
+            "timestamp": datetime.utcnow().isoformat(),
+            "display_name": display_name,
+            "mc_info": mc_info
+        }
+        save_banned_users(banned_users)
+        return jsonify({"message": "User blacklisted successfully"})
+    except Exception as e:
+        app.logger.error(f"Error in blacklist_user: {str(e)}")
+        return jsonify({"error": "An error occurred while processing the request"}), 500
 
 @app.route('/check_blacklist/<user_id>', methods=['GET'])
 def check_blacklist(user_id):
@@ -180,6 +183,7 @@ def website_blacklist():
 def blacklist_requests():
     return jsonify({
         "requests": PENDING_REQUESTS,
+        "discord_id": session.get("discord_id"),  # Make sure this field exists
         "discord_username": session.get("discord_username")
     })
 
