@@ -105,29 +105,30 @@ def blacklist_user():
         app.logger.info(f"Received data: {data}")
 
         # Check for required fields
-        required_fields = ['auth_id', 'user_id', 'reason']
+        required_fields = ['auth_id', 'user_id', 'display_name', 'reason']
         missing_fields = [field for field in required_fields if field not in data]
         
         if missing_fields:
-            return jsonify({
-                "error": f"Missing required fields: {', '.join(missing_fields)}"
-            }), 400
+            error_msg = f"Missing required fields: {', '.join(missing_fields)}"
+            app.logger.error(error_msg)
+            return jsonify({"error": error_msg}), 400
             
         # Convert auth_id to int, with error handling
         try:
             auth_id = int(data['auth_id'])
         except (ValueError, TypeError):
-            return jsonify({
-                "error": "auth_id must be a valid integer"
-            }), 400
+            error_msg = "auth_id must be a valid integer"
+            app.logger.error(error_msg)
+            return jsonify({"error": error_msg}), 400
             
         if auth_id not in AUTHORIZED_USERS:
+            app.logger.error(f"Unauthorized attempt by {auth_id}")
             return jsonify({"error": "Unauthorized"}), 403
 
         user_id = data['user_id']
         reason = data['reason']
         display_name = data['display_name']
-        mc_info = data.get('mc_info')
+        mc_info = data.get('mc_info', {})
 
         banned_users = load_banned_users()
         banned_users[user_id] = {
@@ -137,10 +138,12 @@ def blacklist_user():
             "mc_info": mc_info
         }
         save_banned_users(banned_users)
+        
+        app.logger.info(f"Successfully blacklisted user {user_id}")
         return jsonify({"message": "User blacklisted successfully"})
     except Exception as e:
         app.logger.error(f"Error in blacklist_user: {str(e)}")
-        return jsonify({"error": "An error occurred while processing the request"}), 500
+        return jsonify({"error": f"An error occurred while processing the request: {str(e)}"}), 500
 
 @app.route('/check_blacklist/<user_id>', methods=['GET'])
 def check_blacklist(user_id):
