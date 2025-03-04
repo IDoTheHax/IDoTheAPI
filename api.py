@@ -135,6 +135,7 @@ def blacklist_user():
         # Fetch Minecraft UUID if username is provided and UUID is missing
         if 'minecraft_username' in mc_info and 'minecraft_uuid' not in mc_info:
             mc_info['minecraft_uuid'] = get_uuid(mc_info['minecraft_username'])
+            app.logger.info(mc_info)
             if not mc_info['minecraft_uuid']:
                 app.logger.error(f"Invalid Minecraft username: {mc_info['minecraft_username']}")
                 return jsonify({"error": "Invalid Minecraft username"}), 400
