@@ -6,11 +6,11 @@ import requests
 from functools import wraps
 import os
 from dotenv import load_dotenv
+
 # Discord OAuth2 settings
 load_dotenv()
 CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
-
 REDIRECT_URI = 'http://localhost:5000/callback'  # Ensure this matches your Discord app setting
 
 app = Flask(__name__)
@@ -41,7 +41,6 @@ def get_uuid(username):
         data = response.json()
         return data.get('id')
     return None
-
 
 # Authentication Decorator
 def login_required(f):
@@ -156,12 +155,32 @@ def blacklist_user():
         return jsonify({"error": f"An error occurred while processing the request: {str(e)}"}), 500
 
 
-@app.route('/check_blacklist/<user_id>', methods=['GET'])
-def check_blacklist(user_id):
+@app.route('/check_blacklist/<identifier>', methods=['GET'])
+def check_blacklist(identifier):
     banned_users = load_banned_users()
-    if user_id in banned_users:
-        return jsonify({"blacklisted": True, "reason": banned_users[user_id]["reason"]})
-    return jsonify({"blacklisted": False})
+    # Log the identifier for debugging
+    app.logger.info(f"Checking blacklist for identifier: {identifier}")
+
+    for user_id, details in banned_users.items():
+        mc_info = details.get('mc_info', {})
+
+        # Log user_id and minecraft_uuid for debugging
+        app.logger.info(f"Checking user_id: {user_id}, minecraft_uuid: {mc_info.get('uuid')}")
+
+        # Check both Discord user ID and Minecraft UUID
+        if user_id == identifier or mc_info.get('uuid') == identifier:
+            result = {
+                "reason": details["reason"],
+                "display_name": details.get("display_name", "Unknown"),
+                "timestamp": details.get("timestamp"),
+                "mc_info": mc_info  # Include mc_info in the result
+            }
+            app.logger.info(f"Found match for identifier: {identifier}, Details: {result}")
+            return jsonify(result)  # Return immediately upon finding a match
+
+    app.logger.info(f"No match found for identifier: {identifier}")
+    return jsonify({})  # Return empty dictionary if no match is found
+
 
 # Routes for Web Form and Blacklist Requests with Authentication
 @app.route('/')
