@@ -99,32 +99,68 @@ def logout():
     session.clear()
     return redirect(url_for('index'))
 
+# Add new functions
+def load_api_keys():
+    try:
+        with open("data/api_keys.json", "r") as f:
+            data = json.load(f)
+            return data.get("keys", [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        app.logger.warning(f"Error loading API keys: {str(e)}")
+        return []
+
+def get_user_id_from_api_key(api_key):
+    keys = load_api_keys()
+    now = datetime.utcnow()
+    for key_data in keys:
+        if key_data["key"] == api_key:
+            expiry_str = key_data.get("expiry")
+            if expiry_str is None:
+                return key_data["user_id"]
+            try:
+                expiry = datetime.fromisoformat(expiry_str)
+                if expiry > now:
+                    return key_data["user_id"]
+            except ValueError:
+                app.logger.error(f"Invalid expiry format in API key: {expiry_str}")
+    return None
+
+def api_key_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get("X-API-Key")
+        user_id = get_user_id_from_api_key(api_key)
+        if user_id is None:
+            return jsonify({"error": "Invalid or missing API key"}), 401
+        g.user_id = user_id
+        return f(*args, **kwargs)
+    return decorated_function
+
+def api_authorized_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not hasattr(g, "user_id") or int(g.user_id) not in AUTHORIZED_USERS:
+            return jsonify({"error": "Unauthorized"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 @app.route('/blacklist', methods=['POST'])
+@api_key_required
+@api_authorized_required
 def blacklist_user():
     try:
         data = request.json
         app.logger.info(f"Received data: {data}")
 
-        # Check for required fields
-        required_fields = ['auth_id', 'user_id', 'display_name', 'reason']
+        # Check for required fields, excluding auth_id
+        required_fields = ['user_id', 'display_name', 'reason']
         missing_fields = [field for field in required_fields if field not in data]
 
         if missing_fields:
             error_msg = f"Missing required fields: {', '.join(missing_fields)}"
             app.logger.error(error_msg)
             return jsonify({"error": error_msg}), 400
-
-        # Convert auth_id to int, with error handling
-        try:
-            auth_id = int(data['auth_id'])
-        except (ValueError, TypeError):
-            error_msg = "auth_id must be a valid integer"
-            app.logger.error(error_msg)
-            return jsonify({"error": error_msg}), 400
-
-        if auth_id not in AUTHORIZED_USERS:
-            app.logger.error(f"Unauthorized attempt by {auth_id}")
-            return jsonify({"error": "Unauthorized"}), 403
 
         user_id = data['user_id']
         reason = data['reason']
@@ -156,31 +192,24 @@ def blacklist_user():
 
 
 @app.route('/check_blacklist/<identifier>', methods=['GET'])
+@api_key_required
 def check_blacklist(identifier):
     banned_users = load_banned_users()
-    # Log the identifier for debugging
     app.logger.info(f"Checking blacklist for identifier: {identifier}")
 
     for user_id, details in banned_users.items():
         mc_info = details.get('mc_info', {})
-
-        # Log user_id and minecraft_uuid for debugging
-        app.logger.info(f"Checking user_id: {user_id}, minecraft_uuid: {mc_info.get('uuid')}")
-
-        # Check both Discord user ID and Minecraft UUID
-        if user_id == identifier or mc_info.get('uuid') == identifier:
+        if user_id == identifier or mc_info.get('minecraft_uuid') == identifier:
             result = {
                 "reason": details["reason"],
                 "display_name": details.get("display_name", "Unknown"),
                 "timestamp": details.get("timestamp"),
-                "mc_info": mc_info  # Include mc_info in the result
+                "mc_info": mc_info
             }
             app.logger.info(f"Found match for identifier: {identifier}, Details: {result}")
-            return jsonify(result)  # Return immediately upon finding a match
-
+            return jsonify(result)
     app.logger.info(f"No match found for identifier: {identifier}")
-    return jsonify({})  # Return empty dictionary if no match is found
-
+    return jsonify({})
 
 # Routes for Web Form and Blacklist Requests with Authentication
 @app.route('/')
