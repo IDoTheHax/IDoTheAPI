@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, g
 from flask_cors import CORS
 import json
 from datetime import datetime
@@ -6,22 +6,25 @@ import requests
 from functools import wraps
 import os
 from dotenv import load_dotenv
+import uuid
 
 # Discord OAuth2 settings
 load_dotenv()
 CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
-REDIRECT_URI = 'http://localhost:5000/callback'  # Ensure this matches your Discord app setting
+REDIRECT_URI = 'http://localhost:5000/callback'
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24) # Use os.urandom for better security
+app.secret_key = os.urandom(24)
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 CORS(app, supports_credentials=True)
 
 # Blacklist data
 BANNED_USERS_FILE = "data/banned_users.json"
+API_KEYS_FILE = "data/api_keys.json"
 AUTHORIZED_USERS = [987323487343493191, 1088268266499231764, 726721909374320640, 710863981039845467, 1151136371164065904]
-PENDING_REQUESTS = []  # Temporary storage for requests, replace with db in real app
+UNLIMITED_KEY_ROLES = [1201518458739892334]
+PENDING_REQUESTS = []
 
 def load_banned_users():
     try:
@@ -60,54 +63,19 @@ def authorized_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# OAuth Routes
-@app.route('/login')
-def login():
-    oauth2_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify"
-    return redirect(oauth2_url)
-
-@app.route('/callback')
-def callback():
-    code = request.args.get('code')
-    token_url = 'https://discord.com/api/oauth2/token'
-    data = {
-        'client_id': CLIENT_ID,
-        'client_secret': CLIENT_SECRET,
-        'grant_type': 'authorization_code',
-        'code': code,
-        'redirect_uri': REDIRECT_URI
-    }
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    response = requests.post(token_url, data=data, headers=headers)
-    token_json = response.json()
-    access_token = token_json.get('access_token')
-
-    user_url = 'https://discord.com/api/users/@me'
-    headers = {
-        'Authorization': f'Bearer {access_token}'
-    }
-    user_response = requests.get(user_url, headers=headers)
-    user_json = user_response.json()
-    session["discord_id"] = user_json.get("id")
-    session["discord_username"] = user_json.get("username")
-    return redirect(url_for('blacklist_requests')) ## TODO MAKE IT GO TO THE OTHER SERVER
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
-
-# Add new functions
+# API Key Functions
 def load_api_keys():
     try:
-        with open("data/api_keys.json", "r") as f:
+        with open(API_KEYS_FILE, "r") as f:
             data = json.load(f)
             return data.get("keys", [])
     except (FileNotFoundError, json.JSONDecodeError) as e:
         app.logger.warning(f"Error loading API keys: {str(e)}")
         return []
+
+def save_api_keys(keys):  # Changed 'data' to 'keys' for clarity
+    with open(API_KEYS_FILE, "w") as f:
+        json.dump({"keys": keys}, f, indent=4)  # Ensure proper structure
 
 def get_user_id_from_api_key(api_key):
     keys = load_api_keys()
@@ -126,7 +94,7 @@ def get_user_id_from_api_key(api_key):
     return None
 
 def api_key_required(f):
-    @wraps(f)
+    @wraps(f)  # Preserve the original function's identity
     def decorated_function(*args, **kwargs):
         api_key = request.headers.get("X-API-Key")
         user_id = get_user_id_from_api_key(api_key)
@@ -137,13 +105,84 @@ def api_key_required(f):
     return decorated_function
 
 def api_authorized_required(f):
-    @wraps(f)
+    @wraps(f)  # Preserve the original function's identity
     def decorated_function(*args, **kwargs):
         if not hasattr(g, "user_id") or int(g.user_id) not in AUTHORIZED_USERS:
             return jsonify({"error": "Unauthorized"}), 403
         return f(*args, **kwargs)
     return decorated_function
 
+# OAuth Routes
+@app.route('/login')
+def login():
+    oauth2_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify"
+    return redirect(oauth2_url)
+
+@app.route('/callback')
+def callback():
+    code = request.args.get('code')
+    token_url = 'https://discord.com/api/oauth2/token'
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': REDIRECT_URI
+    }
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    response = requests.post(token_url, data=data, headers=headers)
+    token_json = response.json()
+    access_token = token_json.get('access_token')
+    user_url = 'https://discord.com/api/users/@me'
+    headers = {'Authorization': f'Bearer {access_token}'}
+    user_response = requests.get(user_url, headers=headers)
+    user_json = user_response.json()
+    session["discord_id"] = user_json.get("id")
+    session["discord_username"] = user_json.get("username")
+    return redirect(url_for('blacklist_requests'))
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
+
+# API Routes
+@app.route("/api_keys", methods=["POST"])
+@api_key_required
+def create_api_key():
+    try:
+        data = request.json or {}
+        user_id = data.get("user_id")
+        roles = data.get("roles", [])  # Get the roles array from the request
+        
+        # Validation
+        if not user_id:
+            return jsonify({"error": "Missing user_id parameter"}), 400
+            
+        keys = load_api_keys()
+        
+        # Check if user already has a key and if they're allowed multiple keys
+        has_unlimited_role = any(role_id in UNLIMITED_KEY_ROLES for role_id in roles)
+        user_has_key = any(key_data["user_id"] == user_id for key_data in keys)
+        
+        if user_has_key and not has_unlimited_role:
+            return jsonify({"error": "User already has an API key"}), 400
+                
+        new_key = str(uuid.uuid4())
+        keys.append({
+            "key": new_key,
+            "user_id": user_id,
+            "created_at": datetime.utcnow().isoformat(),
+            "role_created": True if has_unlimited_role else False,  # Track if created by privileged role
+            "expiry": None
+        })
+        
+        save_api_keys(keys)
+        app.logger.info(f"Created new API key for user: {user_id}")
+        return jsonify({"api_key": new_key})
+    except Exception as e:
+        app.logger.error(f"Error creating API key: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/blacklist', methods=['POST'])
 @api_key_required
@@ -152,29 +191,22 @@ def blacklist_user():
     try:
         data = request.json
         app.logger.info(f"Received data: {data}")
-
-        # Check for required fields, excluding auth_id
         required_fields = ['user_id', 'display_name', 'reason']
         missing_fields = [field for field in required_fields if field not in data]
-
         if missing_fields:
             error_msg = f"Missing required fields: {', '.join(missing_fields)}"
             app.logger.error(error_msg)
             return jsonify({"error": error_msg}), 400
-
         user_id = data['user_id']
         reason = data['reason']
         display_name = data['display_name']
         mc_info = data.get('mc_info', {})
-
-        # Fetch Minecraft UUID if username is provided and UUID is missing
         if 'minecraft_username' in mc_info and 'minecraft_uuid' not in mc_info:
             mc_info['minecraft_uuid'] = get_uuid(mc_info['minecraft_username'])
             app.logger.info(mc_info)
             if not mc_info['minecraft_uuid']:
                 app.logger.error(f"Invalid Minecraft username: {mc_info['minecraft_username']}")
                 return jsonify({"error": "Invalid Minecraft username"}), 400
-
         banned_users = load_banned_users()
         banned_users[user_id] = {
             "reason": reason,
@@ -183,20 +215,17 @@ def blacklist_user():
             "mc_info": mc_info
         }
         save_banned_users(banned_users)
-
         app.logger.info(f"Successfully blacklisted user {user_id}")
         return jsonify({"message": "User blacklisted successfully"})
     except Exception as e:
         app.logger.error(f"Error in blacklist_user: {str(e)}")
         return jsonify({"error": f"An error occurred while processing the request: {str(e)}"}), 500
 
-
 @app.route('/check_blacklist/<identifier>', methods=['GET'])
 @api_key_required
 def check_blacklist(identifier):
     banned_users = load_banned_users()
     app.logger.info(f"Checking blacklist for identifier: {identifier}")
-
     for user_id, details in banned_users.items():
         mc_info = details.get('mc_info', {})
         if user_id == identifier or mc_info.get('minecraft_uuid') == identifier:
@@ -211,7 +240,7 @@ def check_blacklist(identifier):
     app.logger.info(f"No match found for identifier: {identifier}")
     return jsonify({})
 
-# Routes for Web Form and Blacklist Requests with Authentication
+# Web Routes
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -220,21 +249,15 @@ def index():
 def website_blacklist():
     discord_user_id = request.form.get('discord_user_id')
     display_name = request.form.get('display_name')
-    minecraft_username = request.form.get('minecraft_username', '')  # Optional field
+    minecraft_username = request.form.get('minecraft_username', '')
     minecraft_uuid = request.form.get('minecraft_uuid', '')
     reason = request.form.get('reason')
-
-    # Validate required fields
     if not all([discord_user_id, display_name, reason]):
         return "Missing required fields", 400
-
-    # If Minecraft UUID isn't provided, attempt to fetch it using the username
     if not minecraft_uuid and minecraft_username:
         minecraft_uuid = get_uuid(minecraft_username)
         if not minecraft_uuid:
             return jsonify({"error": "Invalid Minecraft username"}), 400
-
-    # Store the request in the pending list. Use a database in a real app
     request_data = {
         'discord_user_id': discord_user_id,
         'display_name': display_name,
@@ -251,7 +274,7 @@ def website_blacklist():
 def blacklist_requests():
     return jsonify({
         "requests": PENDING_REQUESTS,
-        "discord_id": session.get("discord_id"),  # Make sure this field exists
+        "discord_id": session.get("discord_id"),
         "discord_username": session.get("discord_username")
     })
 
@@ -263,4 +286,5 @@ def check_login():
         return jsonify({"logged_in": False})
 
 if __name__ == '__main__':
+    os.makedirs("data", exist_ok=True)
     app.run(debug=True)
