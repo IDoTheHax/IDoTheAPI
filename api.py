@@ -236,7 +236,7 @@ def check_blacklist(identifier):
                 try:
                     # Parse the ISO timestamp and format it
                     dt = datetime.fromisoformat(timestamp)
-                    formatted_timestamp = dt.strftime("%B %d, %Y at %I:%M %p")  # Example: March 4, 2025 at 03:20 PM
+                    formatted_timestamp = dt.strftime("%B %d, %Y at %I:%M %p")
                 except (ValueError, TypeError):
                     # If parsing fails, use the original timestamp
                     pass
