@@ -229,10 +229,22 @@ def check_blacklist(identifier):
     for user_id, details in banned_users.items():
         mc_info = details.get('mc_info', {})
         if user_id == identifier or mc_info.get('minecraft_uuid') == identifier or mc_info.get('uuid') == identifier:
+            # Format the timestamp
+            timestamp = details.get("timestamp")
+            formatted_timestamp = timestamp
+            if timestamp:
+                try:
+                    # Parse the ISO timestamp and format it
+                    dt = datetime.fromisoformat(timestamp)
+                    formatted_timestamp = dt.strftime("%B %d, %Y at %I:%M %p")  # Example: March 4, 2025 at 03:20 PM
+                except (ValueError, TypeError):
+                    # If parsing fails, use the original timestamp
+                    pass
+                    
             result = {
                 "reason": details["reason"],
                 "display_name": details.get("display_name", "Unknown"),
-                "timestamp": details.get("timestamp"),
+                "timestamp": formatted_timestamp,
                 "mc_info": mc_info
             }
             app.logger.info(f"Found match for identifier: {identifier}, Details: {result}")
