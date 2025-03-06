@@ -228,7 +228,7 @@ def check_blacklist(identifier):
     app.logger.info(f"Checking blacklist for identifier: {identifier}")
     for user_id, details in banned_users.items():
         mc_info = details.get('mc_info', {})
-        if user_id == identifier or mc_info.get('minecraft_uuid') == identifier:
+        if user_id == identifier or mc_info.get('minecraft_uuid') == identifier or mc_info.get('uuid') == identifier:
             result = {
                 "reason": details["reason"],
                 "display_name": details.get("display_name", "Unknown"),
