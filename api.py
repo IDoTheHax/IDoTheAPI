@@ -184,6 +184,36 @@ def create_api_key():
         app.logger.error(f"Error creating API key: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
+@app.route("/api_keys/user/<user_id>", methods=["GET"])
+@api_key_required
+@api_authorized_required
+def get_user_api_keys(user_id):
+    try:
+        # Load all API keys
+        keys = load_api_keys()
+        
+        # Filter keys for the specific user
+        user_keys = [
+            {
+                "key": key_data["key"],
+                "created_at": key_data["created_at"],
+                "role_created": key_data.get("role_created", False),
+                "expiry": key_data.get("expiry")
+            }
+            for key_data in keys
+            if key_data["user_id"] == user_id
+        ]
+        
+        if not user_keys:
+            app.logger.info(f"No API keys found for user {user_id}")
+            return jsonify({"keys": []}), 200
+            
+        app.logger.info(f"Retrieved {len(user_keys)} API keys for user {user_id}")
+        return jsonify({"keys": user_keys})
+    except Exception as e:
+        app.logger.error(f"Error retrieving API keys for user {user_id}: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
 @app.route('/blacklist', methods=['POST'])
 @api_key_required
 @api_authorized_required
