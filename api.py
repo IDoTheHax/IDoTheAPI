@@ -1,5 +1,10 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, g
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_caching import Cache
 from flask_cors import CORS
+from file_storage import FileStorage
+from limits.storage import registry
 import json
 from datetime import datetime
 import requests
@@ -7,6 +12,9 @@ from functools import wraps
 import os
 from dotenv import load_dotenv
 import uuid
+
+# Register the custom storage with the limits library
+registry.register_storage(FileStorage, "file")
 
 # Discord OAuth2 settings
 load_dotenv()
@@ -19,6 +27,19 @@ app.secret_key = os.urandom(24)
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 CORS(app, supports_credentials=True)
 
+# Caching to reduce load on server
+cache = Cache(app, config={'CACHE_TYPE': 'simple'})
+
+# Init Limiter with the registered file storage
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="file://",  # Now properly registered
+    storage_options={
+        "file_path": "data/rate_limits/limiter.json"
+    }
+)
 # Blacklist data
 BANNED_USERS_FILE = "data/banned_users.json"
 API_KEYS_FILE = "data/api_keys.json"
@@ -309,6 +330,37 @@ def website_blacklist():
     }
     PENDING_REQUESTS.append(request_data)
     return jsonify({"message": "Request submitted successfully"})
+
+@app.route('/view_blacklist')
+@cache.cached(timeout=300)
+@limiter.limit("100 per hour")
+def view_blacklist():
+    banned_users = load_banned_users()
+    # Format the data for easier template rendering
+    formatted_users = []
+    for user_id, details in banned_users.items():
+        timestamp = details.get("timestamp", "")
+        formatted_timestamp = timestamp
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp)
+                formatted_timestamp = dt.strftime("%B %d, %Y at %I:%M %p")
+            except (ValueError, TypeError):
+                pass
+        
+        formatted_users.append({
+            "user_id": user_id,
+            "display_name": details.get("display_name", "Unknown"),
+            "reason": details.get("reason", ""),
+            "timestamp": formatted_timestamp,
+            "minecraft_username": details.get("mc_info", {}).get("minecraft_username", ""),
+            "minecraft_uuid": details.get("mc_info", {}).get("minecraft_uuid", "")
+        })
+    
+    return render_template('blacklisted.html',
+                         banned_users=formatted_users,
+                         discord_id=session.get("discord_id"),
+                         discord_username=session.get("discord_username"))
 
 @app.route('/blacklist_requests')
 @login_required
