@@ -272,6 +272,49 @@ def blacklist_user():
         app.logger.error(f"Error in blacklist_user: {str(e)}")
         return jsonify({"error": f"An error occurred while processing the request: {str(e)}"}), 500
 
+@app.route('/blacklist/remove', methods=['POST'])
+@api_key_required
+@api_authorized_required
+def remove_from_blacklist():
+    try:
+        data = request.json
+        app.logger.info(f"Received remove request data: {data}")
+        
+        # Required field: the identifier to remove by (e.g., user_id or minecraft_uuid)
+        identifier = data.get('identifier')
+        field = data.get('field', 'user_id')  # Default to user_id if not specified
+        
+        if not identifier:
+            return jsonify({"error": "Missing identifier"}), 400
+        
+        if field not in ['user_id', 'minecraft_uuid']:
+            return jsonify({"error": "Invalid field. Must be 'user_id' or 'minecraft_uuid'"}), 400
+
+        banned_users = load_banned_users()
+        
+        # Search for the user to remove
+        user_to_remove = None
+        for user_id, details in banned_users.items():
+            if field == 'user_id' and user_id == identifier:
+                user_to_remove = user_id
+                break
+            elif field == 'minecraft_uuid' and details.get('mc_info', {}).get('minecraft_uuid') == identifier:
+                user_to_remove = user_id
+                break
+        
+        if user_to_remove:
+            del banned_users[user_to_remove]
+            save_banned_users(banned_users)
+            app.logger.info(f"User with {field}={identifier} removed from blacklist")
+            return jsonify({"message": f"User with {field}={identifier} removed from blacklist"})
+        else:
+            app.logger.info(f"No user found with {field}={identifier}")
+            return jsonify({"error": f"No user found with {field}={identifier}"}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error removing from blacklist: {str(e)}")
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
 @app.route('/check_blacklist/<identifier>', methods=['GET'])
 @api_key_required
 def check_blacklist(identifier):
